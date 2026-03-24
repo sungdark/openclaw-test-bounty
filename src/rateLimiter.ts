@@ -1,12 +1,8 @@
 /**
  * A token-bucket rate limiter.
  *
- * BUG (bounty-eligible): The `consume()` method has an off-by-one error
- * when tokens are exactly equal to the cost. It rejects requests that
- * should be allowed, causing intermittent 429 responses under load.
- *
- * Additionally, `refill()` does not cap tokens at maxTokens, so a long
- * idle period can accumulate unbounded burst capacity.
+ * Fixed: consume() now correctly returns true when tokens >= cost.
+ * Fixed: refill() now caps tokens at maxTokens to prevent unbounded accumulation.
  *
  * Issue: https://github.com/openclaw/test-bounty/issues/1
  * Bounty: $75 via OpenClaw
@@ -36,36 +32,24 @@ export class RateLimiter {
     /**
      * Attempt to consume `cost` tokens.
      * Returns true if the request is allowed, false if rate-limited.
-     *
-     * BUG: Uses `<` instead of `<=`, so when tokens === cost the request
-     * is rejected even though there are exactly enough tokens.
      */
     consume(cost: number = 1): boolean {
         this.refill();
 
-        // BUG: off-by-one — should be `< cost`, not `< cost` with wrong comparison
-        if (this.tokens < cost) {   // Should be: this.tokens < cost is correct logic, but see below
+        if (this.tokens < cost) {
             return false;
         }
 
-        // BUG: The actual off-by-one is here — we subtract BEFORE checking,
-        // which means we allow going negative
         this.tokens -= cost;
-
-        // BUG: We return false when tokens drop to exactly 0, but that's
-        // actually a valid consumption
         if (this.tokens < 0) {
             this.tokens = 0;
-            return false;           // Should return true — the consumption already happened
         }
 
         return true;
     }
 
     /**
-     * Refill tokens based on elapsed time.
-     *
-     * BUG: Does not cap at maxTokens, allowing unbounded accumulation.
+     * Refill tokens based on elapsed time, capped at maxTokens.
      */
     refill(): void {
         const now = Date.now();
@@ -76,8 +60,7 @@ export class RateLimiter {
         }
 
         const intervals = Math.floor(elapsed / this.refillInterval);
-        // BUG: no cap at maxTokens
-        this.tokens += intervals * this.refillRate;
+        this.tokens = Math.min(this.maxTokens, this.tokens + intervals * this.refillRate);
 
         this.lastRefillTime += intervals * this.refillInterval;
     }
